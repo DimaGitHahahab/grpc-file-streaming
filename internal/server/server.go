@@ -1,0 +1,133 @@
+package server
+
+import (
+	"context"
+	"google.golang.org/grpc"
+	"grpc-file-streaming/internal/service"
+	"io"
+	"net"
+)
+
+const defaultChunkSize = 256
+
+// Server is a server side of the file service that is used to upload, list,
+// download and remove files from Repository.
+type Server interface {
+	Listen(string) error
+}
+
+// Repository describes the methods that must be implemented by the file repository to be used as a Server's repo.
+type Repository interface {
+	Get(string) (*service.File, error)
+	Put(string, []byte) error
+	GetAllMetadata() ([]*service.MetaData, error)
+	Delete(string) error
+}
+
+// server is a gRPC implementation of Server.
+type server struct {
+	s *grpc.Server
+}
+
+// New returns a new not started Server instance with given options.
+// To start the server, call Listen method.
+func New(repo Repository, opts ...grpc.ServerOption) Server {
+	s := grpc.NewServer(opts...)
+	service.RegisterFileServiceServer(s, &fileServiceServer{repo: repo})
+	return &server{s: s}
+}
+
+// Listen starts the server on the given address using TCP.
+func (s *server) Listen(address string) error {
+	lis, err := net.Listen("tcp", address)
+	if err != nil {
+		return err
+	}
+	return s.s.Serve(lis)
+}
+
+// fileServiceServer is a gRPC implementation of FileServiceServer.
+type fileServiceServer struct {
+	service.UnimplementedFileServiceServer
+	repo Repository
+}
+
+// Download accepts service.DownloadRequest, gets file name from it and streams the file back to the client.
+func (s *fileServiceServer) Download(request *service.DownloadRequest, stream service.FileService_DownloadServer) error {
+
+	fileName := request.GetName()
+	file, err := s.repo.Get(fileName)
+	if err != nil {
+		return err
+	}
+
+	fileContent := file.GetContent()
+	chunkSize := defaultChunkSize
+	for i := 0; i < len(fileContent); i += chunkSize {
+		end := i + chunkSize
+		if end > len(fileContent) {
+			end = len(fileContent)
+		}
+		downloadResponse := &service.DownloadResponse{Chunk: fileContent[i:end]}
+		if err = stream.Send(downloadResponse); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ListFiles sends all files' descriptions (service.MetaData) without their content to the client.
+func (s *fileServiceServer) ListFiles(ctx context.Context, in *service.ListFilesRequest) (*service.ListFilesResponse, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			metaData, err := s.repo.GetAllMetadata()
+			if err != nil {
+				return nil, err
+			}
+			return &service.ListFilesResponse{Files: metaData}, nil
+		}
+	}
+}
+
+// Upload accepts service.UploadRequest, gets file name or content from every sent portion of data
+// and then stores the file in the Repository.
+func (s *fileServiceServer) Upload(stream service.FileService_UploadServer) error {
+	var fileName string
+	var fileContent []byte
+	for {
+		uploadRequest, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		switch content := uploadRequest.Content.(type) {
+		case *service.UploadRequest_Chunk:
+			fileContent = append(fileContent, content.Chunk...)
+		case *service.UploadRequest_FileName:
+			fileName = content.FileName
+
+		}
+	}
+	return s.repo.Put(fileName, fileContent)
+}
+
+// Delete accepts service.DeleteRequest, gets file name from it and deletes the file from the Repository.
+func (s *fileServiceServer) Delete(ctx context.Context, in *service.DeleteRequest) (*service.DeleteResponse, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			err := s.repo.Delete(in.GetName())
+			if err != nil {
+				return nil, err
+			}
+			return &service.DeleteResponse{}, nil
+		}
+	}
+}
