@@ -1,133 +1,46 @@
 package server
 
 import (
-	"context"
-	"google.golang.org/grpc"
-	"grpc-file-streaming/internal/service"
-	"io"
 	"net"
+
+	"grpc-file-streaming/internal/service"
+	"grpc-file-streaming/pkg/server_interceptors"
+
+	"google.golang.org/grpc"
 )
 
-const defaultChunkSize = 256
-
-// Server is a server side of the file service that is used to upload, list,
-// download and remove files from Repository.
-type Server interface {
-	Listen(string) error
-}
-
-// Repository describes the methods that must be implemented by the file repository to be used as a Server's repo.
-type Repository interface {
-	Get(string) (*service.File, error)
-	Put(string, []byte) error
-	GetAllMetadata() ([]*service.MetaData, error)
-	Delete(string) error
-}
-
-// server is a gRPC implementation of Server.
-type server struct {
-	s *grpc.Server
-}
-
-// New returns a new not started Server instance with given options.
+// New returns a new Server with interceptors.
 // To start the server, call Listen method.
-func New(repo Repository, opts ...grpc.ServerOption) Server {
-	s := grpc.NewServer(opts...)
+func New(repo Repository) *Server {
+	unaryInterceptorChain := grpc.ChainUnaryInterceptor(
+		server_interceptors.UnaryValidate,
+		server_interceptors.UnaryLoggerInterceptor,
+	)
+
+	streamInterceptorChain := grpc.ChainStreamInterceptor(
+		server_interceptors.StreamValidate,
+		server_interceptors.StreamLoggerInterceptor,
+	)
+
+	s := grpc.NewServer(unaryInterceptorChain, streamInterceptorChain)
+
 	service.RegisterFileServiceServer(s, &fileServiceServer{repo: repo})
-	return &server{s: s}
+
+	return &Server{srv: s}
 }
 
-// Listen starts the server on the given address using TCP.
-func (s *server) Listen(address string) error {
-	lis, err := net.Listen("tcp", address)
+type Server struct {
+	srv *grpc.Server
+}
+
+func (s *Server) Run(addr string) error {
+	lis, err := net.Listen("tcp", net.JoinHostPort("", addr))
 	if err != nil {
 		return err
 	}
-	return s.s.Serve(lis)
+	return s.srv.Serve(lis)
 }
 
-// fileServiceServer is a gRPC implementation of FileServiceServer.
-type fileServiceServer struct {
-	service.UnimplementedFileServiceServer
-	repo Repository
-}
-
-// Download accepts service.DownloadRequest, gets file name from it and streams the file back to the client.
-func (s *fileServiceServer) Download(request *service.DownloadRequest, stream service.FileService_DownloadServer) error {
-
-	fileName := request.GetName()
-	file, err := s.repo.Get(fileName)
-	if err != nil {
-		return err
-	}
-
-	fileContent := file.GetContent()
-	chunkSize := defaultChunkSize
-	for i := 0; i < len(fileContent); i += chunkSize {
-		end := i + chunkSize
-		if end > len(fileContent) {
-			end = len(fileContent)
-		}
-		downloadResponse := &service.DownloadResponse{Chunk: fileContent[i:end]}
-		if err = stream.Send(downloadResponse); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// ListFiles sends all files' descriptions (service.MetaData) without their content to the client.
-func (s *fileServiceServer) ListFiles(ctx context.Context, in *service.ListFilesRequest) (*service.ListFilesResponse, error) {
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-			metaData, err := s.repo.GetAllMetadata()
-			if err != nil {
-				return nil, err
-			}
-			return &service.ListFilesResponse{Files: metaData}, nil
-		}
-	}
-}
-
-// Upload accepts service.UploadRequest, gets file name or content from every sent portion of data
-// and then stores the file in the Repository.
-func (s *fileServiceServer) Upload(stream service.FileService_UploadServer) error {
-	var fileName string
-	var fileContent []byte
-	for {
-		uploadRequest, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		switch content := uploadRequest.Content.(type) {
-		case *service.UploadRequest_Chunk:
-			fileContent = append(fileContent, content.Chunk...)
-		case *service.UploadRequest_FileName:
-			fileName = content.FileName
-
-		}
-	}
-	return s.repo.Put(fileName, fileContent)
-}
-
-// Delete accepts service.DeleteRequest, gets file name from it and deletes the file from the Repository.
-func (s *fileServiceServer) Delete(ctx context.Context, in *service.DeleteRequest) (*service.DeleteResponse, error) {
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-			err := s.repo.Delete(in.GetName())
-			if err != nil {
-				return nil, err
-			}
-			return &service.DeleteResponse{}, nil
-		}
-	}
+func (s *Server) Stop() {
+	s.srv.GracefulStop()
 }

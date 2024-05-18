@@ -2,12 +2,14 @@ package client
 
 import (
 	"context"
+	"testing"
+	"time"
+
+	"grpc-file-streaming/internal/server"
+
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"grpc-file-streaming/internal/server"
-	"testing"
-	"time"
 )
 
 func TestClient_ContextCancelled(t *testing.T) {

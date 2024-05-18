@@ -1,70 +1,109 @@
 package repository
 
 import (
+	"context"
+	"errors"
+	"time"
+
+	"grpc-file-streaming/internal/service"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"grpc-file-streaming/internal/service"
-	"sync"
-	"time"
 )
 
-var (
-	ErrFileNotFound = status.Error(codes.NotFound, "file not found")
-	ErrFileExists   = status.Error(codes.AlreadyExists, "file already exists")
-)
+var ErrFileNotFound = status.Error(codes.NotFound, "file not found")
 
-// FileStorage is an in-memory concurrent-safe implementation of server.Repository.
-type FileStorage struct {
-	files map[string]*service.File
-	mu    sync.RWMutex
+// MongoDBRepository implements server.Repository
+type MongoDBRepository struct {
+	client   *mongo.Client
+	database *mongo.Database
+	filesCol *mongo.Collection
 }
 
-// New returns a new FileStorage instance.
-func New() *FileStorage {
-	return &FileStorage{files: make(map[string]*service.File), mu: sync.RWMutex{}}
-}
-
-// Get returns a file by name.
-func (s *FileStorage) Get(name string) (*service.File, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if file, ok := s.files[name]; ok {
-		return file, nil
+// NewMongoDBRepository creates a new MongoDBRepository
+func NewMongoDBRepository(ctx context.Context, uri, dbName string) (*MongoDBRepository, error) {
+	clientOpts := options.Client().ApplyURI(uri)
+	client, err := mongo.Connect(ctx, clientOpts)
+	if err != nil {
+		return nil, err
 	}
-	return nil, ErrFileNotFound
+
+	err = client.Ping(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	database := client.Database(dbName)
+	filesCol := database.Collection("files")
+
+	return &MongoDBRepository{
+		client:   client,
+		database: database,
+		filesCol: filesCol,
+	}, nil
 }
 
-// Put adds a new file to the repository.
-func (s *FileStorage) Put(name string, content []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.files[name]; ok {
-		return ErrFileExists
+// Get retrieves a file by its name
+func (r *MongoDBRepository) Get(ctx context.Context, name string) (*service.File, error) {
+	var file service.File
+	err := r.filesCol.FindOne(ctx, bson.M{"metadata.name": name}).Decode(&file)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, ErrFileNotFound
+		}
+		return nil, err
 	}
-	metaData := &service.MetaData{Name: name, Size: int32(len(content)), Timestamp: time.Now().String()}
-	file := &service.File{Content: content, Metadata: metaData}
-	s.files[file.GetMetadata().GetName()] = file
-	return nil
+	return &file, nil
 }
 
-// GetAllMetadata returns metadata of all files in the repository.
-func (s *FileStorage) GetAllMetadata() ([]*service.MetaData, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	res := make([]*service.MetaData, 0, len(s.files))
-	for _, file := range s.files {
-		res = append(res, file.GetMetadata())
+// Put stores a new file or updates an existing one
+func (r *MongoDBRepository) Put(ctx context.Context, name string, content []byte) error {
+	filter := bson.M{"metadata.name": name}
+	update := bson.M{
+		"$set": bson.M{
+			"content": content,
+			"metadata": service.MetaData{
+				Name:      name,
+				Size:      int32(len(content)),
+				Timestamp: time.Now().Format(time.RFC3339),
+			},
+		},
 	}
-	return res, nil
+	opts := options.Update().SetUpsert(true)
+	_, err := r.filesCol.UpdateOne(ctx, filter, update, opts)
+	return err
 }
 
-// Delete removes a file from the repository by name.
-func (s *FileStorage) Delete(name string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.files[name]; !ok {
-		return ErrFileNotFound
+// GetAllMetadata retrieves metadata for all files
+func (r *MongoDBRepository) GetAllMetadata(ctx context.Context) ([]*service.MetaData, error) {
+	cursor, err := r.filesCol.Find(ctx, bson.M{}, options.Find().SetProjection(bson.M{"metadata": 1}))
+	if err != nil {
+		return nil, err
 	}
-	delete(s.files, name)
-	return nil
+	defer cursor.Close(ctx)
+
+	var metaDatas []*service.MetaData
+	for cursor.Next(ctx) {
+		var result struct {
+			Metadata service.MetaData `bson:"metadata"`
+		}
+		if err := cursor.Decode(&result); err != nil {
+			return nil, err
+		}
+		metaDatas = append(metaDatas, &result.Metadata)
+	}
+
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
+	return metaDatas, nil
+}
+
+// Delete removes a file by its name
+func (r *MongoDBRepository) Delete(ctx context.Context, name string) error {
+	_, err := r.filesCol.DeleteOne(ctx, bson.M{"metadata.name": name})
+	return err
 }

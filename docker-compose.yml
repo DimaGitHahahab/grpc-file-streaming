@@ -1,0 +1,20 @@
+services:
+  app:
+    container_name: file-streaming
+    build: .
+    ports:
+      - "50051:50051"
+    depends_on:
+      - mongo
+    restart: always
+
+  mongo:
+    image: mongo:latest
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:

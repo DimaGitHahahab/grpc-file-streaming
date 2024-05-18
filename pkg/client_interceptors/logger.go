@@ -3,9 +3,10 @@ package client_interceptors
 import (
 	"context"
 	"fmt"
-	"google.golang.org/grpc"
 	"log"
 	"time"
+
+	"google.golang.org/grpc"
 )
 
 // StreamLoggerInterceptor logs the beginning and the end of each streaming call:
@@ -17,12 +18,12 @@ func StreamLoggerInterceptor(ctx context.Context,
 	streamer grpc.Streamer,
 	opts ...grpc.CallOption,
 ) (grpc.ClientStream, error) {
-	log.Printf("streaming %v started\n", method)
+	log.Printf("trying %v\n", method)
 	start := time.Now()
 
 	clientStream, err := streamer(ctx, desc, cc, method, opts...)
 
-	l := fmt.Sprintf("streaming %v completed in %v", method, time.Since(start))
+	l := fmt.Sprintf("%v completed in %v", method, time.Since(start))
 	if err != nil {
 		l += fmt.Sprintf(" with error: %v", err)
 	}
@@ -40,7 +41,7 @@ func UnaryLoggerInterceptor(ctx context.Context,
 	invoker grpc.UnaryInvoker,
 	opts ...grpc.CallOption,
 ) error {
-	log.Printf("%v started\n", method)
+	log.Println("trying", method)
 
 	start := time.Now()
 

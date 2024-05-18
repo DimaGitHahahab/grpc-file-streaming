@@ -2,20 +2,16 @@ package server
 
 import (
 	"context"
+	"testing"
+	"time"
+
+	"grpc-file-streaming/internal/client"
+	"grpc-file-streaming/internal/repository"
+
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"grpc-file-streaming/internal/client"
-	"grpc-file-streaming/internal/repository"
-	"testing"
-	"time"
 )
-
-func TestServer_IncorrectAddress(t *testing.T) {
-	serv := New(nil)
-	err := serv.Listen("incorrect address")
-	assert.Error(t, err)
-}
 
 func TestUpload(t *testing.T) {
 	st := repository.New()
@@ -99,5 +95,4 @@ func TestListFiles(t *testing.T) {
 	metadata, err := c.ListFiles(ctx)
 	assert.NoError(t, err)
 	assert.NotNil(t, "test.txt", metadata)
-
 }

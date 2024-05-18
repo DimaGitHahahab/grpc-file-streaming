@@ -1,28 +1,14 @@
 package main
 
 import (
-	"google.golang.org/grpc"
-	"grpc-file-streaming/internal/repository"
-	"grpc-file-streaming/internal/server"
-	"grpc-file-streaming/pkg/server_interceptors"
-	"log"
+	"grpc-file-streaming/internal/app"
+	"grpc-file-streaming/pkg/config"
 )
 
-// example of usage of server
 func main() {
+	cfg := config.LoadConfig()
 
-	unaryInterceptorChain := grpc.ChainUnaryInterceptor(
-		server_interceptors.UnaryValidate,
-		server_interceptors.UnaryLoggerInterceptor,
-	)
+	a := app.New(cfg)
 
-	streamInterceptorChain := grpc.ChainStreamInterceptor(
-		server_interceptors.StreamValidate,
-		server_interceptors.StreamLoggerInterceptor,
-	)
-
-	s := server.New(repository.New(), unaryInterceptorChain, streamInterceptorChain)
-	if err := s.Listen(":50051"); err != nil {
-		log.Fatal("failed to start server: ", err)
-	}
+	a.Run()
 }

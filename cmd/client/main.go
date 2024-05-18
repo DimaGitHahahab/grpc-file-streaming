@@ -2,49 +2,46 @@ package main
 
 import (
 	"context"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"grpc-file-streaming/internal/client"
-	"grpc-file-streaming/pkg/client_interceptors"
+	"fmt"
+	"log"
 	"time"
+
+	"grpc-file-streaming/internal/client"
 )
 
-// example of usage of client
+// example of client methods usage
 func main() {
-	c, err := client.New("localhost:50051",
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithUnaryInterceptor(client_interceptors.UnaryLoggerInterceptor),
-		grpc.WithStreamInterceptor(client_interceptors.StreamLoggerInterceptor),
-	)
+	c, err := client.New("localhost:50051")
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	err = c.Upload(ctx, "test.txt", []byte("test"))
+	// uploading file name and its payload
+	err = c.Upload(ctx, "example.txt", []byte("some example payload"))
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
+	// list of all the files in the server
 	files, err := c.ListFiles(ctx)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	for _, file := range files {
-		println(file)
+		fmt.Println(file)
 	}
 
-	fileContent, err := c.Download(ctx, "test.txt")
+	fileContent, err := c.Download(ctx, "example.txt")
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-	println(string(fileContent))
+	fmt.Println(string(fileContent))
 
-	err = c.Delete(ctx, "test.txt")
+	// removing file from server
+	err = c.Delete(ctx, "example.txt")
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-
 }

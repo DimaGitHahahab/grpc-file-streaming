@@ -2,9 +2,13 @@ package client
 
 import (
 	"context"
-	"google.golang.org/grpc"
-	"grpc-file-streaming/internal/service"
 	"io"
+
+	"grpc-file-streaming/internal/service"
+	"grpc-file-streaming/pkg/client_interceptors"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const defaultChunkSize = 256
@@ -23,8 +27,13 @@ type client struct {
 }
 
 // New returns a new Client instance with given options.
-func New(address string, opts ...grpc.DialOption) (Client, error) {
-	conn, err := grpc.Dial(address, opts...)
+func New(address string) (Client, error) {
+	conn, err := grpc.Dial(
+		address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(client_interceptors.UnaryLoggerInterceptor),
+		grpc.WithStreamInterceptor(client_interceptors.StreamLoggerInterceptor),
+	)
 	if err != nil {
 		return nil, err
 	}
