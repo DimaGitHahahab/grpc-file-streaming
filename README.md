@@ -1,13 +1,13 @@
 ## File Streaming Service
 
-This project is a client and a server for straming files between via gRPC. The files are stored in MongoDB. CRUD operations on files are supported.
+This project is a client and a server for streaming files via gRPC. The files are stored in MongoDB. CRUD operations on files are supported.
 
 ## Running locally
 ### Client:
 ```go run ./cmd/client/main.go```
 
 ### Server:
-main app and mongodb:
+Main app and Mongo containers:
 ```docker compose up```
 
 # Contributing
