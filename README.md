@@ -7,8 +7,8 @@ This project is a client and a server for straming files between via gRPC. The f
 ```go run ./cmd/client/main.go```
 
 ### Server:
-
-```go run ./cmd/server/main.go```
+main app and mongodb:
+```docker compose up```
 
 # Contributing
 
